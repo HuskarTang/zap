@@ -152,6 +152,7 @@ use crate::settings::{
 // 子系统物理删。
 use crate::settings_view::pane_manager::SettingsPaneManager;
 use crate::settings_view::{SettingsSection, SettingsView, SettingsViewEvent};
+use crate::sub2api::{Sub2ApiLoginEvent, Sub2ApiLoginView, Sub2ApiSessionStore};
 #[cfg(all(target_os = "windows", feature = "local_tty"))]
 use crate::shell_indicator::ShellIndicatorType;
 use crate::terminal::available_shells::AvailableShell;
@@ -881,6 +882,7 @@ pub struct Workspace {
     ctrl_tab_palette: ViewHandle<CommandPalette>,
     mouse_states: WorkspaceMouseStates,
     settings_pane: ViewHandle<SettingsView>,
+    sub2api_login_modal: ModalViewState<Modal<Sub2ApiLoginView>>,
     import_modal: ViewHandle<ImportModal>,
     theme_chooser_view: ViewHandle<ThemeChooser>,
     previous_theme: Option<ThemeKind>,
@@ -1749,6 +1751,41 @@ impl Workspace {
         ModalViewState::new(modal)
     }
 
+    fn build_sub2api_login_modal(
+        ctx: &mut ViewContext<Self>,
+    ) -> ModalViewState<Modal<Sub2ApiLoginView>> {
+        let body = ctx.add_typed_action_view(Sub2ApiLoginView::new);
+        ctx.subscribe_to_view(&body, |me, _, event, ctx| match event {
+            Sub2ApiLoginEvent::LoginSucceeded => {
+                me.close_sub2api_login_modal(ctx);
+                me.show_settings_with_section(Some(SettingsSection::Account), ctx);
+            }
+        });
+        let modal = ctx.add_typed_action_view(|ctx| {
+            Modal::new(Some("登录".to_owned()), body, ctx)
+                .close_modal_button_disabled()
+                .with_modal_style(UiComponentStyles {
+                    width: Some(440.),
+                    height: Some(300.),
+                    ..Default::default()
+                })
+                .with_body_style(UiComponentStyles {
+                    height: Some(216.),
+                    padding: Some(Coords::uniform(28.)),
+                    ..Default::default()
+                })
+        });
+        ctx.subscribe_to_view(&modal, |me, _, event, ctx| {
+            if matches!(event, ModalEvent::Close) && Sub2ApiSessionStore::as_ref(ctx).is_logged_in()
+            {
+                me.close_sub2api_login_modal(ctx);
+            } else {
+                me.open_sub2api_login_modal(ctx);
+            }
+        });
+        ModalViewState::new(modal)
+    }
+
     fn build_session_config_modal(
         ctx: &mut ViewContext<Self>,
     ) -> ModalViewState<Modal<SessionConfigModal>> {
@@ -2501,6 +2538,7 @@ impl Workspace {
         });
 
         let require_login_modal = Self::build_require_login_modal(ctx);
+        let sub2api_login_modal = Self::build_sub2api_login_modal(ctx);
 
         let auth_override_warning_modal = Self::build_auth_override_warning_modal(ctx);
 
@@ -2863,6 +2901,7 @@ impl Workspace {
             mouse_states: Default::default(),
             previous_theme: None,
             settings_pane,
+            sub2api_login_modal,
             theme_chooser_view,
             current_workspace_state: Default::default(),
             previous_workspace_state: None,
@@ -3446,6 +3485,39 @@ impl Workspace {
         self.left_panel_view.update(ctx, |left_panel, ctx| {
             left_panel.set_active_pane_group(active_pane_group, &working_directories_model, ctx);
         });
+
+        self.maybe_open_sub2api_login_on_startup(ctx);
+    }
+
+    fn maybe_open_sub2api_login_on_startup(&mut self, ctx: &mut ViewContext<Self>) {
+        if !Sub2ApiSessionStore::as_ref(ctx).is_logged_in() {
+            self.open_sub2api_login_modal(ctx);
+        }
+    }
+
+    fn open_sub2api_login_modal(&mut self, ctx: &mut ViewContext<Self>) {
+        self.close_all_overlays(ctx);
+        self.sub2api_login_modal.open();
+        self.current_workspace_state.is_sub2api_login_modal_open = true;
+        ctx.focus(&self.sub2api_login_modal.view);
+        ctx.notify();
+    }
+
+    fn close_sub2api_login_modal(&mut self, ctx: &mut ViewContext<Self>) {
+        self.sub2api_login_modal.close();
+        self.current_workspace_state.is_sub2api_login_modal_open = false;
+        ctx.notify();
+    }
+
+    fn enforce_sub2api_login_modal(&mut self, ctx: &mut ViewContext<Self>) {
+        if !Sub2ApiSessionStore::as_ref(ctx).is_logged_in()
+            && !self.current_workspace_state.is_sub2api_login_modal_open
+        {
+            self.sub2api_login_modal.open();
+            self.current_workspace_state.is_sub2api_login_modal_open = true;
+            ctx.focus(&self.sub2api_login_modal.view);
+            ctx.notify();
+        }
     }
 
     fn initial_vertical_tabs_panel_open(
@@ -12034,6 +12106,9 @@ impl Workspace {
             // 由 `WorkspaceAction::CheckForUpdate`(`workspace:check_for_updates` binding)
             // 触发;Zap Drive 仍可由 `WorkspaceAction::ZapDrive` 触发。
             SettingsViewEvent::Pane(_) | SettingsViewEvent::StartResize => {}
+            SettingsViewEvent::Sub2ApiLoggedOut => {
+                self.open_sub2api_login_modal(ctx);
+            }
             SettingsViewEvent::ShowToast { message, flavor } => {
                 self.toast_stack.update(ctx, |toast_stack, ctx| {
                     toast_stack
@@ -16436,7 +16511,12 @@ impl Workspace {
                     .finish(),
             );
         } else {
-            // 去中心化分支:不再渲染 Zap Essentials(灯泡)按钮,只保留设置齿轮。
+            target.add_child(
+                Container::new(self.render_sub2api_account_button(appearance))
+                    .with_margin_left(TAB_BAR_PADDING_LEFT)
+                    .finish(),
+            );
+            // 去中心化分支:不再渲染 Zap Essentials(灯泡)按钮,只保留账户与设置入口。
             target.add_child(
                 Container::new(self.render_settings_button(appearance))
                     .with_margin_left(TAB_BAR_PADDING_LEFT)
@@ -16810,6 +16890,23 @@ impl Workspace {
         .finish();
 
         SavePosition::new(Align::new(button).finish(), USER_AVATAR_BUTTON_POSITION_ID).finish()
+    }
+
+    fn render_sub2api_account_button(&self, appearance: &Appearance) -> Box<dyn Element> {
+        Align::new(
+            self.render_tab_bar_icon_button(
+                appearance,
+                icons::Icon::User,
+                &self.mouse_states.sub2api_account_icon,
+                WorkspaceAction::ShowSettingsPage(SettingsSection::Account),
+                "账户".to_owned(),
+                None,
+                false,
+                false,
+            )
+            .finish(),
+        )
+        .finish()
     }
 
     fn render_settings_button(&self, appearance: &Appearance) -> Box<dyn Element> {
@@ -20903,6 +21000,10 @@ impl View for Workspace {
 
         if self.session_config_modal.is_open() {
             stack.add_child(self.session_config_modal.render());
+        }
+
+        if self.current_workspace_state.is_sub2api_login_modal_open {
+            stack.add_child(self.sub2api_login_modal.render());
         }
 
         if self.should_show_session_config_tab_config_chip() {

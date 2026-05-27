@@ -34,6 +34,7 @@ mod same_line_prompt_block;
 mod scroll;
 mod select;
 mod ssh;
+pub mod sub2api;
 mod theme;
 mod vim_banner;
 
@@ -69,6 +70,7 @@ pub use same_line_prompt_block::*;
 pub use scroll::*;
 pub use select::*;
 pub use ssh::*;
+pub use sub2api::*;
 pub use theme::*;
 pub use vim_banner::*;
 use warp_core::user_preferences::GetUserPreferences as _;

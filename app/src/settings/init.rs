@@ -39,7 +39,8 @@ use super::{
     AppEditorSettings, AutoupdateSettings, BlockVisibilitySettings, CodeSettings, DebugSettings,
     EmacsBindingsSettings, FontSettings, FontSettingsChangedEvent, GPUSettings, InputBoxType,
     InputModeSettings, InputSettings, PaneSettings, SameLinePromptBlockSettings, ScrollSettings,
-    SelectionSettings, SshSettings, ThemeSettings, VimBannerSettings, WarpDrivePrivacySettings,
+    SelectionSettings, SshSettings, Sub2ApiSettings, ThemeSettings, VimBannerSettings,
+    WarpDrivePrivacySettings,
 };
 
 pub struct UserDefaultsOnStartup {
@@ -81,6 +82,7 @@ pub fn register_all_settings(ctx: &mut AppContext) {
     AccessibilitySettings::register(ctx);
     NativePreferenceSettings::register(ctx);
     NetworkSettings::register(ctx);
+    Sub2ApiSettings::register(ctx);
     AutoupdateSettings::register(ctx);
     PreferencesSettings::register(ctx);
     WarpDrivePrivacySettings::register(ctx);

@@ -57,6 +57,7 @@ pub enum AgentToolbarItemKind {
     RichInput,
 
     // Both
+    Sub2ApiAccount,
     VoiceInput,
     // Renamed from ImageAttach; alias preserves existing user toolbar configs.
     #[serde(alias = "ImageAttach")]
@@ -76,6 +77,7 @@ impl AgentToolbarItemKind {
             Self::ContextChip(_) | Self::VoiceInput | Self::FileAttach | Self::ShareSession => {
                 ToolbarAvailability::Both
             }
+            Self::Sub2ApiAccount => ToolbarAvailability::Both,
             Self::ModelSelector
             | Self::NLDToggle
             | Self::ContextWindowUsage
@@ -95,7 +97,9 @@ impl AgentToolbarItemKind {
         is_ambient_mode: bool,
     ) -> bool {
         match self {
-            Self::Settings | Self::ShareSession | Self::FileExplorer => !status.is_viewer(),
+            Self::Sub2ApiAccount | Self::Settings | Self::ShareSession | Self::FileExplorer => {
+                !status.is_viewer()
+            }
             Self::FileAttach => !status.is_viewer() || is_ambient_mode,
             Self::FastForwardToggle => !status.is_viewer() || status.is_executor(),
             Self::ContextChip(_)
@@ -115,6 +119,7 @@ impl AgentToolbarItemKind {
             Self::VoiceInput => crate::t!("ai-toolbar-voice-input"),
             Self::FileAttach => crate::t!("ai-toolbar-attach-file"),
             Self::ContextWindowUsage => crate::t!("ai-toolbar-context-usage"),
+            Self::Sub2ApiAccount => "账户".to_owned(),
             Self::FileExplorer => crate::t!("ai-toolbar-file-explorer"),
             Self::RichInput => crate::t!("ai-toolbar-rich-input"),
             Self::ShareSession => "/remote-control".to_string(),
@@ -131,6 +136,7 @@ impl AgentToolbarItemKind {
             Self::VoiceInput => Some(Icon::Microphone),
             Self::FileAttach => Some(Icon::Plus),
             Self::ContextWindowUsage => Some(Icon::ConversationContext0),
+            Self::Sub2ApiAccount => Some(Icon::User),
             Self::FileExplorer => Some(Icon::FileCopy),
             Self::RichInput => Some(Icon::TextInput),
             Self::ShareSession => Some(Icon::Phone01),
@@ -172,6 +178,7 @@ impl AgentToolbarItemKind {
             Self::ContextWindowUsage,
             Self::ModelSelector,
         ];
+        items.push(Self::Sub2ApiAccount);
         items.push(Self::VoiceInput);
         items.push(Self::FileAttach);
         items
@@ -215,6 +222,7 @@ impl AgentToolbarItemKind {
         vec![
             Self::ContextChip(ContextChipKind::WorkingDirectory),
             Self::ContextChip(ContextChipKind::ShellGitBranch),
+            Self::Sub2ApiAccount,
             Self::Settings,
         ]
     }
@@ -230,6 +238,7 @@ impl AgentToolbarItemKind {
             Self::RichInput,
             Self::FileAttach,
             Self::VoiceInput,
+            Self::Sub2ApiAccount,
             Self::Settings,
         ]);
         items

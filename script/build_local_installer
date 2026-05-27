@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: script/build_local_installer [options]
+
+Build an installer package for the current host platform using the existing Zap
+bundle scripts.
+
+Options:
+  --channel <name>   Release channel to build. Defaults to oss.
+  --debug            Build a debug bundle when supported by the platform script.
+  --help             Show this help message.
+
+Notes:
+  - macOS builds a DMG and uses --selfsign to avoid requiring Apple signing
+    credentials for local use.
+  - Linux builds AppImage and deb by default.
+  - Windows builds the standard Inno Setup installer.
+EOF
+}
+
+CHANNEL="oss"
+DEBUG=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --channel)
+      if [[ $# -lt 2 ]]; then
+        echo "Error: --channel requires a value" >&2
+        exit 1
+      fi
+      CHANNEL="$2"
+      shift 2
+      ;;
+    --debug)
+      DEBUG=true
+      shift
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
+OS_TYPE="$(uname -s)"
+WORKSPACE_ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+find_latest_file() {
+  local search_dir="$1"
+  local pattern="$2"
+  find "$search_dir" -maxdepth 1 -type f -name "$pattern" -print0 \
+    | xargs -0 ls -t 2>/dev/null \
+    | head -n 1
+}
+
+print_result() {
+  local label="$1"
+  local path="$2"
+  if [[ -z "$path" || ! -f "$path" ]]; then
+    echo "Build finished, but no $label artifact was found." >&2
+    exit 1
+  fi
+
+  echo "$label: $path"
+}
+
+cd "$WORKSPACE_ROOT_DIR"
+
+if [[ "$OS_TYPE" == "Darwin" ]]; then
+  ARGS=(--channel "$CHANNEL" --selfsign)
+  if [[ "$DEBUG" == true ]]; then
+    ARGS+=(--debug)
+  fi
+  ./script/bundle "${ARGS[@]}"
+
+  DMG_PATH="$(find_latest_file "$WORKSPACE_ROOT_DIR/target/release-lto/bundle/osx" '*.dmg')"
+  if [[ "$DEBUG" == true ]]; then
+    DMG_PATH="$(find_latest_file "$WORKSPACE_ROOT_DIR/target/debug/bundle/osx" '*.dmg')"
+  fi
+  print_result "macOS installer" "$DMG_PATH"
+elif [[ "$OS_TYPE" == "Linux" ]]; then
+  ARGS=(--channel "$CHANNEL" --packages appimage,deb)
+  if [[ "$DEBUG" == true ]]; then
+    ARGS+=(--debug)
+  fi
+  ./script/bundle "${ARGS[@]}"
+
+  if [[ "$DEBUG" == true ]]; then
+    OUT_DIR="$WORKSPACE_ROOT_DIR/target/debug/bundle/linux"
+  elif [[ "$CHANNEL" == "oss" ]]; then
+    OUT_DIR="$WORKSPACE_ROOT_DIR/target/release-lto/bundle/linux"
+  else
+    OUT_DIR="$WORKSPACE_ROOT_DIR/target/release-lto/bundle/linux"
+  fi
+
+  APPIMAGE_PATH="$(find_latest_file "$OUT_DIR" '*.AppImage')"
+  DEB_PATH="$(find_latest_file "$OUT_DIR" '*.deb')"
+  print_result "Linux AppImage" "$APPIMAGE_PATH"
+  print_result "Linux deb" "$DEB_PATH"
+elif [[ "$OS_TYPE" =~ ^(MINGW64_NT|MSYS_NT|CYGWIN_NT) ]]; then
+  ARGS=(-Channel "$CHANNEL")
+  if [[ "$DEBUG" == true ]]; then
+    ARGS+=(-debug_build)
+  fi
+  powershell.exe -ExecutionPolicy Bypass -File ./script/windows/bundle.ps1 "${ARGS[@]}"
+
+  INSTALLER_PATH="$(find_latest_file "$WORKSPACE_ROOT_DIR/script/windows/Output" '*.exe')"
+  print_result "Windows installer" "$INSTALLER_PATH"
+else
+  echo "Unsupported platform: $OS_TYPE" >&2
+  exit 1
+fi

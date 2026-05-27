@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SRC_DIR="$ROOT_DIR/assets/iconset"
+DST_DIR="$ROOT_DIR/app/channels/oss/icon/padded"
+
+for required in \
+  icon_16x16.png \
+  icon_16x16@2x.png \
+  icon_32x32.png \
+  icon_32x32@2x.png \
+  icon_128x128.png \
+  icon_128x128@2x.png \
+  icon_256x256.png \
+  icon_256x256@2x.png \
+  icon_512x512.png
+do
+  if [[ ! -f "$SRC_DIR/$required" ]]; then
+    echo "Missing source icon: $SRC_DIR/$required" >&2
+    exit 1
+  fi
+done
+
+mkdir -p "$DST_DIR"
+
+ROOT_DIR="$ROOT_DIR" python3 - <<'PY'
+import os
+from pathlib import Path
+from PIL import Image
+
+root = Path(os.environ["ROOT_DIR"])
+dst_dir = root / "app/channels/oss/icon/padded"
+src_dir = root / "assets/iconset"
+
+mapping = {
+    "16x16.png": src_dir / "icon_16x16.png",
+    "32x32.png": src_dir / "icon_16x16@2x.png",
+    "48x48.png": src_dir / "icon_256x256.png",
+    "64x64.png": src_dir / "icon_32x32@2x.png",
+    "128x128.png": src_dir / "icon_128x128.png",
+    "256x256.png": src_dir / "icon_128x128@2x.png",
+    "512x512.png": src_dir / "icon_512x512.png",
+}
+
+for out_name, src_path in mapping.items():
+    img = Image.open(src_path).convert("RGBA")
+    size = tuple(int(x) for x in out_name.replace(".png", "").split("x"))
+    if img.size != size:
+        img = img.resize(size, Image.Resampling.LANCZOS)
+    img.save(dst_dir / out_name)
+
+ico_sizes = [(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
+base = Image.open(src_dir / "icon_512x512.png").convert("RGBA")
+base.save(dst_dir / "icon.ico", sizes=ico_sizes)
+PY
+
+echo "Updated oss icon assets in $DST_DIR"

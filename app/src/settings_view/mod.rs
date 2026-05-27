@@ -23,6 +23,7 @@ use crate::{
     GlobalResourceHandlesProvider,
 };
 use about_page::AboutPageView;
+use account_page::{AccountPageEvent, AccountPageView};
 use ai_page::{AISettingsPageAction, AISettingsPageEvent, AISettingsPageView, AISubpage};
 use appearance_page::{AppearancePageAction, AppearanceSettingsPageView};
 use code_page::{CodeSettingsPageAction, CodeSettingsPageEvent};
@@ -64,11 +65,12 @@ use warpui::{
 };
 
 mod about_page;
+mod account_page;
 mod agent_providers_widget;
 mod ai_page;
 mod appearance_page;
-mod code_page;
 mod cloud_sync_page;
+mod code_page;
 mod directory_color_add_picker;
 mod execution_profile_view;
 mod features;
@@ -155,11 +157,13 @@ pub enum SettingsViewEvent {
     OpenProjectRulesPane {
         rule_paths: Vec<PathBuf>,
     },
+    Sub2ApiLoggedOut,
 }
 
 /// Different navigation sections within the settings view
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub enum SettingsSection {
+    Account,
     About,
     MCPServers,
     Appearance,
@@ -204,6 +208,7 @@ impl Display for SettingsSection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s: String = match self {
             SettingsSection::About => crate::t!("settings-section-about"),
+            SettingsSection::Account => "账户".to_owned(),
             SettingsSection::MCPServers => crate::t!("settings-section-mcp-servers"),
             SettingsSection::Appearance => crate::t!("settings-section-appearance"),
             SettingsSection::Features => crate::t!("settings-section-features"),
@@ -287,6 +292,7 @@ impl FromStr for SettingsSection {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "About" => Ok(Self::About),
+            "Account" | "账户" => Ok(Self::Account),
             "AI" => Ok(Self::AI),
             "MCP Servers" => Ok(Self::MCPServers),
             "Appearance" => Ok(Self::Appearance),
@@ -912,6 +918,7 @@ fn next_stop_index(current: usize, len: usize, direction: CycleDirection) -> usi
 macro_rules! update_page {
     ($handle:expr, $update:expr, $ctx:expr) => {
         match $handle {
+            SettingsPageViewHandle::Account(handle) => $ctx.update_view(handle, $update),
             SettingsPageViewHandle::Appearance(handle) => $ctx.update_view(handle, $update),
             SettingsPageViewHandle::Features(handle) => $ctx.update_view(handle, $update),
             SettingsPageViewHandle::Keybindings(handle) => $ctx.update_view(handle, $update),
@@ -991,6 +998,11 @@ impl SettingsView {
         // About page
         let about_page_handle = ctx.add_typed_action_view(AboutPageView::new);
 
+        let account_page_handle = ctx.add_typed_action_view(AccountPageView::new);
+        ctx.subscribe_to_view(&account_page_handle, |_, _, event, ctx| match event {
+            AccountPageEvent::LoggedOut => ctx.emit(SettingsViewEvent::Sub2ApiLoggedOut),
+        });
+
         // AI page
         let ai_page_handle = ctx.add_typed_action_view(AISettingsPageView::new);
         let ai_page_handle_for_nav = ai_page_handle.clone();
@@ -1067,6 +1079,7 @@ impl SettingsView {
         });
 
         let mut settings_pages = vec![
+            SettingsPage::new(account_page_handle),
             SettingsPage::new(ai_page_handle),
             SettingsPage::new(code_page_handle),
             SettingsPage::new(appearance_page_handle),
@@ -1092,6 +1105,7 @@ impl SettingsView {
         // 去中心化分支:本地模式下移除所有云端账号 / 计费 / 团队 / 同步 / 分享相关的
         // 设置入口。
         let mut nav_items = vec![
+            SettingsNavItem::Page(SettingsSection::Account),
             SettingsNavItem::Umbrella(SettingsUmbrella::new(
                 "Agents",
                 SettingsSection::ai_subpages().to_vec(),
@@ -1688,6 +1702,7 @@ impl SettingsView {
 
     fn should_render_page(&self, settings_page: &SettingsPage, app: &AppContext) -> bool {
         match &settings_page.view_handle {
+            SettingsPageViewHandle::Account(v) => v.as_ref(app).should_render(app),
             SettingsPageViewHandle::Keybindings(v) => v.as_ref(app).should_render(app),
             SettingsPageViewHandle::Features(v) => v.as_ref(app).should_render(app),
             SettingsPageViewHandle::Appearance(v) => v.as_ref(app).should_render(app),

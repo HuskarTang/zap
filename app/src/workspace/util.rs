@@ -30,6 +30,7 @@ pub(super) struct WorkspaceMouseStates {
     pub(super) agent_management_view_button: MouseStateHandle,
     pub(super) left_panel_icon: MouseStateHandle,
     pub(super) settings_icon: MouseStateHandle,
+    pub(super) sub2api_account_icon: MouseStateHandle,
     pub(super) dismiss_banner_button: MouseStateHandle,
     pub(super) sign_in_button: MouseStateHandle,
     pub(super) sign_up_button: MouseStateHandle,
@@ -101,6 +102,7 @@ pub struct WorkspaceState {
     pub is_agent_management_popup_open: bool,
     pub is_auth_override_modal_open: bool,
     pub is_require_login_modal_open: bool,
+    pub is_sub2api_login_modal_open: bool,
     pub is_workflow_modal_open: bool,
     pub is_prompt_editor_open: bool,
     pub is_agent_toolbar_editor_open: bool,
@@ -154,6 +156,7 @@ impl WorkspaceState {
             || self.is_session_config_modal_open
             || self.is_new_worktree_modal_open
             || self.is_remove_tab_config_dialog_open
+            || self.is_sub2api_login_modal_open
             || {
                 let one_time_modal = OneTimeModalModel::as_ref(app);
                 one_time_modal.is_zap_launch_modal_open()
@@ -242,6 +245,52 @@ impl WorkspaceState {
 
     pub fn pane_being_renamed(&self) -> Option<PaneViewLocator> {
         self.pane_being_renamed
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        auth::{AuthManager, AuthStateProvider},
+        workspace::OneTimeModalModel,
+    };
+
+    use super::WorkspaceState;
+    use warpui::App;
+
+    #[test]
+    fn close_all_modals_keeps_sub2api_login_modal_open() {
+        let mut state = WorkspaceState {
+            is_palette_open: true,
+            is_sub2api_login_modal_open: true,
+            is_tab_config_params_modal_open: true,
+            ..Default::default()
+        };
+
+        state.close_all_modals();
+
+        assert!(!state.is_palette_open);
+        assert!(!state.is_tab_config_params_modal_open);
+        assert!(state.is_sub2api_login_modal_open);
+    }
+
+    #[test]
+    fn sub2api_login_modal_blocks_other_modal_paths() {
+        App::test((), |mut app| async move {
+            app.add_singleton_model(|_| AuthStateProvider::new_for_test());
+            app.add_singleton_model(AuthManager::new_for_test);
+            app.add_singleton_model(OneTimeModalModel::new);
+
+            let state = WorkspaceState {
+                is_sub2api_login_modal_open: true,
+                ..Default::default()
+            };
+
+            app.update(|ctx| {
+                assert!(state.is_any_non_palette_modal_open(ctx));
+                assert!(state.is_any_modal_open(ctx));
+            });
+        });
     }
 }
 

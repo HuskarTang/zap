@@ -188,6 +188,7 @@ pub struct AgentInputFooter {
     ftu_callout_close_button: ViewHandle<ActionButton>,
     // Zap Wave 7-3:`environment_selector` field was removed with the hosted-mode footer.
     reasoning_depth_selector: ViewHandle<ReasoningDepthSelector>,
+    sub2api_account_button: ViewHandle<ActionButton>,
     prompt_alert: ViewHandle<PromptAlertView>,
     ambient_agent_view_model: ModelHandle<AmbientAgentViewModel>,
     left_display_chips: Vec<ViewHandle<DisplayChip>>,
@@ -323,6 +324,16 @@ impl AgentInputFooter {
                 .with_tooltip_alignment(TooltipAlignment::Left)
                 .on_click(|ctx| {
                     ctx.dispatch_typed_action(AgentInputFooterAction::SelectFile);
+                })
+        });
+        let sub2api_account_button = ctx.add_typed_action_view(|_ctx| {
+            ActionButton::new("", AgentInputButtonTheme)
+                .with_icon(Icon::User)
+                .with_tooltip("账户")
+                .with_size(button_size)
+                .with_tooltip_alignment(TooltipAlignment::Left)
+                .on_click(|ctx| {
+                    ctx.dispatch_typed_action(AgentInputFooterAction::OpenSub2ApiAccount);
                 })
         });
 
@@ -697,6 +708,7 @@ impl AgentInputFooter {
             // Zap Wave 7-3:`environment_selector` field init was removed with hosted-mode UI.
             // 子系统物理删。
             reasoning_depth_selector,
+            sub2api_account_button,
             prompt_alert,
             terminal_model,
             render_ftu_callout: false,
@@ -1206,6 +1218,9 @@ impl AgentInputFooter {
             AgentToolbarItemKind::ShareSession => {
                 let _ = shared_status;
                 None
+            }
+            AgentToolbarItemKind::Sub2ApiAccount => {
+                Some(ChildView::new(&self.sub2api_account_button).finish())
             }
             AgentToolbarItemKind::Settings => Some(ChildView::new(&self.settings_button).finish()),
             // Handled by the available_in() guard above; included for exhaustiveness.
@@ -1753,6 +1768,9 @@ impl AgentInputFooter {
                 None
             }
             AgentToolbarItemKind::FileAttach => Some(ChildView::new(&self.file_button).finish()),
+            AgentToolbarItemKind::Sub2ApiAccount => {
+                Some(ChildView::new(&self.sub2api_account_button).finish())
+            }
             AgentToolbarItemKind::ContextWindowUsage => {
                 let has_conversation = FeatureFlag::ContextWindowUsageV2.is_enabled()
                     && BlocklistAIHistoryModel::as_ref(app)
@@ -2014,6 +2032,7 @@ pub enum AgentInputFooterAction {
     OpenPluginUpdateInstructionsPane,
     DismissPluginChip,
     OpenCodingAgentSettings,
+    OpenSub2ApiAccount,
     ShowContextMenu {
         position: Vector2F,
     },
@@ -2203,6 +2222,9 @@ impl TypedActionView for AgentInputFooter {
                     page: SettingsSection::ThirdPartyCLIAgents,
                     widget_id: crate::settings_view::cli_agent_settings_widget_id(),
                 });
+            }
+            AgentInputFooterAction::OpenSub2ApiAccount => {
+                ctx.emit(AgentInputFooterEvent::OpenSettings(SettingsSection::Account));
             }
             AgentInputFooterAction::ShowContextMenu { position } => {
                 ctx.emit(AgentInputFooterEvent::ShowContextMenu {

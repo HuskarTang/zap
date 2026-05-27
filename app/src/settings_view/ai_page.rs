@@ -123,7 +123,7 @@ use crate::{
     appearance::Appearance,
     editor::Event as EditorEvent,
     editor::{EditorView, TextOptions},
-    settings::{AISettings, VoiceInputToggleKey},
+    settings::{AISettings, AgentProvider, VoiceInputToggleKey},
     ui_components::blended_colors,
     util::bindings,
     view_components::{Dropdown, DropdownItem},
@@ -143,6 +143,108 @@ const AI_SETTINGS_DROPDOWN_MAX_HEIGHT: f32 = 250.;
 const CONTEXT_WINDOW_SLIDER_WIDTH: f32 = 220.;
 const CONTEXT_WINDOW_INPUT_BOX_WIDTH: f32 = 120.;
 const WISPR_FLOW_URL: &str = "https://wisprflow.ai/";
+
+fn first_provider_model_llm_id(provider: &AgentProvider) -> Option<LLMId> {
+    let model_id = provider
+        .models
+        .iter()
+        .find(|model| !model.id.trim().is_empty())
+        .map(|model| model.id.clone())?;
+    Some(crate::ai::agent_providers::llm_id::encode(
+        &provider.id,
+        &model_id,
+    ))
+}
+
+fn should_seed_default_profile_with_provider(
+    provider: &AgentProvider,
+    current_byop_last_used_model_id: &str,
+) -> bool {
+    !current_byop_last_used_model_id.trim().starts_with("byop:")
+        && first_provider_model_llm_id(provider).is_some()
+}
+
+fn seed_default_profile_with_provider_if_needed(
+    provider: &AgentProvider,
+    ctx: &mut ViewContext<AISettingsPageView>,
+) {
+    let current_last_used = AISettings::as_ref(ctx).byop_last_used_model_id.to_string();
+    if !should_seed_default_profile_with_provider(provider, &current_last_used) {
+        return;
+    }
+
+    let Some(llm_id) = first_provider_model_llm_id(provider) else {
+        return;
+    };
+    let llm_id_str = llm_id.to_string();
+
+    AISettings::handle(ctx).update(ctx, |settings, ctx| {
+        if settings.byop_last_used_model_id.to_string() != llm_id_str {
+            report_if_error!(settings
+                .byop_last_used_model_id
+                .set_value(llm_id_str.clone(), ctx));
+        }
+    });
+
+    AIExecutionProfilesModel::handle(ctx).update(ctx, |profiles, ctx| {
+        let profile_id = profiles.default_profile_id();
+        if let Some(profile) = profiles.get_profile_by_id(profile_id, ctx) {
+            let data = profile.data();
+            if data.base_model.is_none() {
+                profiles.set_base_model(profile_id, Some(llm_id.clone()), ctx);
+            }
+            if data.active_ai_model.is_none() {
+                profiles.set_active_ai_model(profile_id, Some(llm_id.clone()), ctx);
+            }
+            if data.next_command_model.is_none() {
+                profiles.set_next_command_model(profile_id, Some(llm_id.clone()), ctx);
+            }
+            if data.cli_agent_model.is_none() {
+                profiles.set_cli_agent_model(profile_id, Some(llm_id.clone()), ctx);
+            }
+            if data.computer_use_model.is_none() {
+                profiles.set_computer_use_model(profile_id, Some(llm_id.clone()), ctx);
+            }
+        }
+    });
+}
+
+#[cfg(test)]
+mod provider_seed_tests {
+    use super::*;
+    use crate::settings::{AgentProviderApiType, AgentProviderModel};
+
+    fn provider_with_model() -> AgentProvider {
+        let mut provider = AgentProvider::new_empty();
+        provider.name = "sub500".to_owned();
+        provider.api_type = AgentProviderApiType::OpenAi;
+        provider.models = vec![AgentProviderModel::from_id("gpt-5.5".to_owned())];
+        provider
+    }
+
+    #[test]
+    fn should_seed_default_profile_only_when_no_byop_last_used_model_exists() {
+        let provider = provider_with_model();
+
+        assert!(should_seed_default_profile_with_provider(&provider, ""));
+        assert!(should_seed_default_profile_with_provider(&provider, "auto"));
+        assert!(!should_seed_default_profile_with_provider(
+            &provider,
+            "byop:provider:model"
+        ));
+    }
+
+    #[test]
+    fn first_provider_model_llm_id_uses_provider_and_model_id() {
+        let provider = provider_with_model();
+        let llm_id = first_provider_model_llm_id(&provider).unwrap();
+
+        assert_eq!(
+            llm_id.as_str(),
+            format!("byop:{}:gpt-5.5", provider.id).as_str()
+        );
+    }
+}
 
 pub fn init_actions_from_parent_view<T: Action + Clone>(
     app: &mut AppContext,
@@ -916,6 +1018,12 @@ impl AISettingsPageView {
                                 ctx,
                             );
                         });
+                }
+                _ if matches!(me.active_subpage, Some(AISubpage::Providers))
+                    && matches!(event, AISettingsChangedEvent::AgentProviders { .. }) =>
+                {
+                    me.rebuild_current_page(ctx);
+                    return;
                 }
                 _ => (),
             }
@@ -3409,6 +3517,14 @@ impl TypedActionView for AISettingsPageView {
                     providers.push(new_provider);
                     let _ = settings.agent_providers.set_value(providers, ctx);
                 });
+                if let Some(provider) = AISettings::as_ref(ctx)
+                    .agent_providers
+                    .value()
+                    .last()
+                    .cloned()
+                {
+                    seed_default_profile_with_provider_if_needed(&provider, ctx);
+                }
                 self.rebuild_current_page(ctx);
             }
             AISettingsPageAction::SyncProviderModelsFromModelsDev { provider_id } => {
@@ -5624,10 +5740,7 @@ impl AIFactWidget {
                 "{} ",
                 crate::t!("settings-ai-rules-description")
             )),
-            FormattedTextFragment::hyperlink(
-                crate::t!("settings-ai-learn-more"),
-                "",
-            ),
+            FormattedTextFragment::hyperlink(crate::t!("settings-ai-learn-more"), ""),
         ];
         let description = Container::new(
             FormattedTextElement::new(
@@ -6523,9 +6636,13 @@ impl AwsBedrockWidget {
                 ..Default::default()
             };
 
-            let label = Text::new_inline(label, appearance.ui_font_family(), appearance.ui_font_body())
-                .with_color(styles::header_font_color(is_enabled, app).into())
-                .finish();
+            let label = Text::new_inline(
+                label,
+                appearance.ui_font_family(),
+                appearance.ui_font_body(),
+            )
+            .with_color(styles::header_font_color(is_enabled, app).into())
+            .finish();
 
             let input = appearance
                 .ui_builder()
@@ -6568,16 +6685,24 @@ impl AwsBedrockWidget {
                 .with_cross_axis_alignment(CrossAxisAlignment::Start)
                 .with_spacing(4.)
                 .with_child(
-                    Text::new_inline(title_text, appearance.ui_font_family(), appearance.ui_font_body())
-                        .with_style(Properties::default().weight(Weight::Semibold))
-                        .with_color(title_color.into())
-                        .finish(),
+                    Text::new_inline(
+                        title_text,
+                        appearance.ui_font_family(),
+                        appearance.ui_font_body(),
+                    )
+                    .with_style(Properties::default().weight(Weight::Semibold))
+                    .with_color(title_color.into())
+                    .finish(),
                 )
                 .with_child(
-                    Text::new(detail_text, appearance.ui_font_family(), appearance.ui_font_body())
-                        .with_color(detail_color.into())
-                        .soft_wrap(true)
-                        .finish(),
+                    Text::new(
+                        detail_text,
+                        appearance.ui_font_family(),
+                        appearance.ui_font_body(),
+                    )
+                    .with_color(detail_color.into())
+                    .soft_wrap(true)
+                    .finish(),
                 );
 
             Container::new(
